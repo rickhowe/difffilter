@@ -1,0 +1,144 @@
+*difffilter.txt* Selectively compare lines as you want in diff
+
+Last Change: 2024/04/19
+Version:     1.0
+Author:      Rick Howe (Takumi Ohtani) <rdcxy754@ybb.ne.jp>
+Copyright:   (c) 2024 Rick Howe
+License:     MIT
+
+-----------------------------------------------------------------------------
+INTRODUCTION                                         *difffilter*
+
+The standard "diff" command supports "--ignore-matching-lines=regexp (-I
+regexp)" option to ignore hunks if all the inserted and deleted lines match
+regexp. This plugin provides similar functionality but tries a line-level
+filtering based on regexp and other matching criteria.
+
+For example, vim will show such differences for these 3 files:
+  +--------------------------------------------------------------------+
+  |*1 `func Add(a, b)     `|*1 `func Add(i, j)     `|*1 `func Add(x, y)     `|
+  | 2   " ver 1: Apr 17  | 2   " ver 1: Apr 17  | 2   " ver 1: Apr 17  |
+  |*3 `  return a:a + a:b `|*3 `  " ver 2: Oct 29  `|*3 `  " ver 2: Oct 29  `|
+  |#  |------------------| |*4 `  return a:i + a:j `|*4 `  " ver 3: Nov 25  `|
+  |#  |------------------| |#  |------------------| |@5   |return_a:x_+_a:y| |
+  | 4 endfunc            | 5 endfunc            | 6 endfunc            |
+  | ~                    | ~                    | ~                    |
+  +--------------------------------------------------------------------+
+  *: DiffChange, @: DiffAdd, #: DiffDelete
+
+This plugin gets vim to exclude comment lines so that you can focus on
+seeing the differences on the "return" statement.
+  +--------------------------------------------------------------------+
+  |*1 `func Add(a, b)     `|*1 `func Add(i, j)     `|*1 `func Add(x, y)     `|
+  | 2   " ver 1: Apr 17  | 2   " ver 1: Apr 17  | 2   " ver 1: Apr 17  |
+  |*3 `  return a:a + a:b `| 3   " ver 2: Oct 29  | 3   " ver 2: Oct 29  |
+  | 4 endfunc            |*4 `  return a:i + a:j `| 4   " ver 3: Nov 25  |
+  | ~                    | 5 endfunc            |*5 `  return a:x + a:y `|
+  | ~                    | ~                    | 6 endfunc            |
+  | ~                    | ~                    | ~                    |
+  +--------------------------------------------------------------------+
+  *: DiffChange
+
+Internally, this plugin sets a function to the 'diffexpr' option to:
+- evaluate if each line should be compared or not
+- mark the to-be-excluded lines in the files
+- call a builtin diff function to compare them
+- modify diff hunks to get vim to ignore the excluded lines
+
+You need to specify a boolean expression in |t:DiffFilterExpr| tabpage local
+or |g:DiffFilterExpr| global variable. In above example, the following lambda
+expression is specified to exclude comment lines.
+>
+  let g:DiffFilterExpr = {lnum -> synIDtrans(synID(lnum,
+      \match(getline(lnum), '\S') + 1, 0)) != hlID('Comment')}
+<
+It checks a comment syntax highlighting on each line. That is a default
+expression of |g:DiffFilterExpr| variable, which can be commonly used for a
+comment line in a lot of filetypes. Alternatively, to make it faster, specify
+a pattern of comment line specific to a filetype like vim script:
+>
+  let g:DiffFilterExpr = {lnum -> getline(lnum) !~ '^\s*["#]'}
+<
+In addition, to check a comment block as well for a filetype like C and C++:
+>
+  function MyDiffFilterExpr(lnum)
+    let [c_line, c_start, c_end] = ['//', '/*', '*/']
+    let [c_line, c_start, c_end] = map([c_line, c_start, c_end],
+                          \{_, v -> '^\s*' . escape(v, '/*')})
+    for c in [c_line, c_start, c_end]
+      if getline(a:lnum) =~ c | return 1 | endif
+    endfor
+    let pos = [line('.'), col('.')]
+    call cursor([a:lnum, 1])
+    let sline = searchpair(c_start, '', c_end, 'nW')
+    call cursor(pos)
+    return (0 < sline) ? 1 : 0
+  endfunction
+  let g:DiffFilterExpr = function('MyDiffFilterExpr')
+<
+To use the last selected Visual area:
+>
+  let g:DiffFilterExpr = {lnum -> line("'<") <= lnum && lnum <= line("'>")}
+<
+To compare lines not including a multibyte character:
+>
+  let g:DiffFilterExpr = {lnum -> getline(lnum) !~ '[^\x00-\x7F]'}
+<
+To select indented lines:
+>
+  let g:DiffFilterExpr = {lnum -> 0 < indent(lnum)}
+<
+To filter lines based on a text field criteria:
+>
+  function MyDiffFilterExpr(lnum)
+    let text = getline(a:lnum)
+    let field = len(split(text, '|'))
+    return text =~ '^|\+|$' && field[0] =~ '^\d\+$' && len(field) == 5
+  endfunction
+  let g:DiffFilterExpr = function('MyDiffFilterExpr')
+<
+As a default, this plugin sets |hl-Conceal| to visualize which line is not
+diff compared and conceal them. To hide those lines, use 'conceallevel' and
+'concealcursor' options. Disable |t:DiffFilterConceal| or
+|g:DiffFilterConceal| variable if not necessary,
+
+Use `:diffupdate` command to reevaluate and redraw diff lines when text or
+option is changed.
+
+-----------------------------------------------------------------------------
+OPTIONS                                              *difffilter-options*
+
+|t:DiffFilterExpr|, |g:DiffFilterExpr|
+    A boolean expression to evaluate if a line should be compared or not
+    (default: {lnum -> synIDtrans(synID(lnum,
+                    \match(getline(lnum), '\S') + 1, 0)) != hlID('Comment')})
+
+|t:DiffFilterConceal|, |g:DiffFilterConceal|
+    Enable (1) or disable (0) to highlight other than diff compared lines in
+    |hl-Conceal| (default: 1)
+
+|g:NoDiffFilter|
+    Disable (1) this plugin (default: 0)
+
+-----------------------------------------------------------------------------
+REQUIREMENTS                                         *difffilter-requirements*
+
+This plugin requires a builtin diff function:
+- |diff()| and patch-9.1.0099 in vim 9.1
+- Lua |vim.diff()| in nvim 0.6.0
+
+-----------------------------------------------------------------------------
+SEE ALSO                                             *difffilter-seealso*
+
+There are other diff related plugins available:
+- |diffchar.vim|: Highlight the exact differences, based on characters and words
+  (https://github.com/rickhowe/diffchar.vim)
+- |spotdiff.vim|: A range and area selectable `:diffthis` to compare partially
+  (https://github.com/rickhowe/spotdiff.vim)
+- |wrapfiller|: Align each wrapped line virtually between windows
+  (https://github.com/rickhowe/wrapfiller.vim)
+
+-----------------------------------------------------------------------------
+CHANGE HISTORY                                       *difffilter-history*
+
+ vim:tw=78:ts=8:ft=help:norl:
