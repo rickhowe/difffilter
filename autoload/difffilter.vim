@@ -1,7 +1,7 @@
 " difffilter.vim : Selectively compare lines as you want in diff
 "
-" Last Change: 2024/04/19
-" Version:     1.0
+" Last Change: 2024/05/01
+" Version:     1.1
 " Author:      Rick Howe (Takumi Ohtani) <rdcxy754@ybb.ne.jp>
 " Copyright:   (c) 2024 Rick Howe
 " License:     MIT
@@ -17,25 +17,23 @@ function! difffilter#DiffFilter() abort
   if v:option_old != v:option_new
     let dw = filter(getwininfo(),
                           \'gettabwinvar(v:val.tabnr, v:val.winid, "&diff")')
-    if v:option_new
-      if len(dw) == 1
-        if !get(g:, 'NoDiffFilter', 0)
-          if !exists('s:save_dex')
-            let s:save_dex = &diffexpr
-            let &diffexpr = 'difffilter#DiffExpr()'
-          endif
+    if v:option_new && len(dw) == 1
+      if !get(g:, 'NoDiffFilter', 0)
+        if !exists('s:save_dex')
+          let s:save_dex = &diffexpr
+          let &diffexpr = 'difffilter#DiffExpr()'
         endif
       endif
-    else
-      if len(dw) == 0
-        if exists('s:save_dex')
-          let &diffexpr = s:save_dex
-          unlet s:save_dex
-        endif
+    elseif !v:option_new && len(dw) == 0
+      if exists('s:save_dex')
+        let &diffexpr = s:save_dex
+        unlet s:save_dex
       endif
-      let db = map(filter(dw, 'v:val.tabnr == tabpagenr()'),
-                                                    \'winbufnr(v:val.winid)')
-      if min(db) == max(db) | call s:DiffConceal() | endif
+    endif
+    call filter(dw, 'v:val.tabnr == tabpagenr() &&
+                                      \v:val.bufnr == winbufnr(win_getid())')
+    if v:option_new && len(dw) == 1 || !v:option_new && len(dw) == 0
+      call s:DiffConceal()
     endif
   endif
 endfunction
@@ -50,7 +48,7 @@ function! difffilter#DiffExpr() abort
         \ let s:dw += [filter(getbufinfo(str2nr(expand("<abuf>")))[0].windows,
                                         \''getwinvar(v:val, "&diff")'')[0]]')
   else
-    " set zz in other lines than filtered
+    " set zz in excluded lines
     let DE = get(t:, 'DiffFilterExpr', get(g:, 'DiffFilterExpr'))
     if empty(DE) || type(DE) != v:t_func | let DE = {-> 1} | endif
     let zz = repeat(nr2char(0x7f), 3)
@@ -69,10 +67,11 @@ function! difffilter#DiffExpr() abort
       endif
     endfor
     let dl = split(s:DiffFunc(tx[0], tx[1], op), "\n")
-    " change @@ hunks to skip zz lines
-    let xt = get(t:, 'DiffFilterExtra', get(g:, 'DiffFilterExtra', 1))
+    " change @@ hunks to exclude zz lines
     let HK = {l1, l2 -> '@@ -' . l1[0] . ((l1[1] == 1) ? '' : ',' . l1[1]) .
                     \' +' . l2[0] . ((l2[1] == 1) ? '' : ',' . l2[1]) . ' @@'}
+    " vim not always work correctly so disable to split hunks as a default
+    let xt = get(t:, 'DiffFilterExtra', get(g:, 'DiffFilterExtra', 0))
     let ed = ''
     let hk = []
     for ix in range(len(dl) - 1, 0, -1)
@@ -80,7 +79,9 @@ function! difffilter#DiffExpr() abort
       if dx[0] != '@'
         let ed = ((dx == '-' . zz) ? '<' : (dx == '+' . zz) ? '>' : dx[0]) . ed
       else
-        if ed =~ '[<>]'
+        if ed !~ '[<>]'
+          let hk = [dx] + hk
+        else
           let [d1, d2] = map(split(dx[3 : -4]), 'v:val[1:]')
           let [p1, q1] = [(d1 =~ ',') ? split(d1, ',') : [d1, 1], []]
           let [p2, q2] = [(d2 =~ ',') ? split(d2, ',') : [d2, 1], []]
@@ -90,25 +91,22 @@ function! difffilter#DiffExpr() abort
                                                       \[e2, p2, q2, '+', '>']]
             if ee =~ ez
               if ee !~ es . ez . '\+' . es
-                " -</<-/<</<-< or +>/>+/>>/>+> : ignore < or > zz lines
+                " -</<-/<</<-< or +>/>+/>>/>+> : exclude < or > zz lines
                 let pp[1] = count(ee, es)
                 if 0 < pp[1]
                   let pp[0] += len(split(ee, es . '\+', 1)[0])
                 endif
               else
-                " ->- or +<+ : devide into 2 or more hunks
-                let ee .= ez
-                let cc = 0
-                for ix in range(len(ee))
-                  if ee[ix] == es
-                    let cc += 1
-                  elseif ee[ix] == ez
-                    if 0 < cc
-                      let qq += [[pp[0] + ix - cc, cc]]
-                      let cc = 0
+                " -<- or +>+ : split into 2 or more hunks
+                if xt
+                  let cc = 0
+                  for sz in split(ee, '\%(' . es . '\+\|' . ez . '\+\)\zs')
+                    if sz[0] == es
+                      let qq += [[pp[0] + cc , len(sz)]]
                     endif
-                  endif
-                endfor
+                    let cc += len(sz)
+                  endfor
+                endif
               endif
             endif
           endfor
@@ -131,8 +129,6 @@ function! difffilter#DiffExpr() abort
             endif
             let hk = hx + hk
           endif
-        else
-          let hk = [dx] + hk
         endif
         let ed = ''
       endif
@@ -141,7 +137,6 @@ function! difffilter#DiffExpr() abort
     if len(uniq(sort(map(filter(gettabinfo(tabpagenr())[0].windows,
             \'getwinvar(v:val, "&diff")'), 'winbufnr(v:val)')))) == len(s:dw)
       " diff session ends
-      call s:DiffConceal()
       call execute('autocmd! ' . s:df . ' FilterWritePost')
       unlet s:dw
     endif
@@ -149,26 +144,34 @@ function! difffilter#DiffExpr() abort
 endfunction
 
 function! s:DiffConceal() abort
-  " clear conceal in all windows and draw in all diff windows
   let dc = !has('conceal') ? 0 :
               \get(t:, 'DiffFilterConceal', get(g:, 'DiffFilterConceal', 1))
   for wn in gettabinfo(tabpagenr())[0].windows
     let wv = getwinvar(wn, '')
     if has_key(wv, s:id)
-      if !empty(filter(getmatches(wn), 'v:val.id == wv[s:id]'))
-        call matchdelete(wv[s:id], wn)
-      endif
+      call map(filter(getmatches(wn), 'index(wv[s:id], v:val.id) != -1'),
+                                                \'matchdelete(v:val.id, wn)')
       unlet wv[s:id]
     endif
-    if dc != 0
-      if has_key(wv, s:ln)
+    if has_key(wv, s:ln)
+      if dc != 0
+        " avoid to draw conceal over diff_hl lines
+        call win_execute(wn,
+                        \'call filter(wv[s:ln], "diff_hlID(v:val, 1) == 0")')
         if !empty(wv[s:ln])
-          call setwinvar(wn, s:id, matchaddpos('Conceal',
+          if !has('nvim') || has('nvim-0.9.0')
+            call setwinvar(wn, s:id, [matchaddpos('Conceal',
                   \(0 < dc) ? wv[s:ln] : map(wv[s:ln], '[v:val, 1, abs(dc)]'),
-                                                      \0, -1, #{window: wn}))
+                                                      \0, -1, #{window: wn})])
+          else
+            call setwinvar(wn, s:id, map(range(0, len((0 < dc) ? wv[s:ln] :
+                              \map(wv[s:ln], '[v:val, 1, abs(dc)]')) - 1, 8),
+                        \'matchaddpos("Conceal", wv[s:ln][v:val : v:val + 7],
+                                                    \0, -1, #{window: wn})'))
+          endif
         endif
-        unlet wv[s:ln]
       endif
+      unlet wv[s:ln]
     endif
   endfor
 endfunction

@@ -1,7 +1,7 @@
 *difffilter.txt* Selectively compare lines as you want in diff
 
-Last Change: 2024/04/19
-Version:     1.0
+Last Change: 2024/05/01
+Version:     1.1
 Author:      Rick Howe (Takumi Ohtani) <rdcxy754@ybb.ne.jp>
 Copyright:   (c) 2024 Rick Howe
 License:     MIT
@@ -140,5 +140,9 @@ There are other diff related plugins available:
 
 -----------------------------------------------------------------------------
 CHANGE HISTORY                                       *difffilter-history*
+
+Update : 1.1
+* Changed not to split diff hunks because vim does not always work correctly.
+* Fixed not to draw |hl-Conceal| over diff highlighted lines.
 
  vim:tw=78:ts=8:ft=help:norl:
