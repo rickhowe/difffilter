@@ -1,6 +1,8 @@
 # difffilter
 
-## Selectively compare lines as you want in diff
+## Selectively compare lines as you want in diff mode
+
+### Introduction
 
 The standard "diff" command supports "--ignore-matching-lines=regexp (-I
 regexp)" option to ignore hunks if all the inserted and deleted lines match
@@ -16,28 +18,62 @@ seeing the differences on the "return" statement.
 
 ![sample2](sample2.png)
 
-Internally, this plugin sets a function to the `diffexpr` option to:
-* evaluate if each line should be compared or not
-* mark the to-be-excluded lines in the files
+As a default, this plugin highlights the diff excluded lines in `hl-Conceal`.
+To hide those concealed lines, use the `conceallevel` and `concealcursor`
+options. Additionally, like below, you can set the `t:DiffFilterConceal` or
+`g:DiffFilterConceal` variable and show their filler lines with an eob(`~`)
+character to align corresponding diff compared lines between windows. Disable
+if not necessary,
+
+![sample3](sample3.png)
+
+Use `:diffupdate` command to reevaluate and redraw diff lines when text or
+option is changed.
+
+### Filter Expression
+
+Internally, this plugin sets a function to the `diffexpr` option in order to:
+* evaluate if each line should be diff compared or not
+* mark the to-be-excluded lines in the buffer contents
 * call a builtin diff function to compare them
 * modify diff hunks to get vim to ignore the excluded lines
 
-You need to specify a boolean expression in `t:DiffFilterExpr` tabpage local
-or `g:DiffFilterExpr` global variable. In above example, the following lambda
-expression is specified to exclude comment lines.
+In above example, the following lambda expression is used to exclude comment
+lines.
 ```
-let g:DiffFilterExpr = {lnum -> synIDtrans(synID(lnum,
-      \match(getline(lnum), '\S') + 1, 0)) != hlID('Comment')}
+{lnum -> (&commentstring[:-2] == '%s') ?
+  \getline(lnum) !~ '^\s*' . escape(&commentstring, '^$.*[]~\')[:-3] :
+  \synIDtrans(synID(lnum, match(getline(lnum), '\S') + 1, 0)) !=
+                                                    \hlID('Comment')}
 ```
-It checks a comment syntax highlighting on each line. That is a default
-expression of `g:DiffFilterExpr` variable, which can be commonly used for a
-comment line in a lot of filetypes. Alternatively, to make it faster, specify
-a pattern of comment line specific to a filetype like vim script:
+That checks a comment string at the start of each line if the `&commentstring`
+option indicates it possible. Otherwise, checks a comment syntax highlighting
+on each line. That is a default expression in this plugin, which can be
+commonly used for a comment line in a lot of filetypes.
+
+You can specify another expression in the `t:DiffFilterExpr` tabpage local or
+`g:DiffFilterExpr` global variable, like below.
+
+To use the last selected Visual area:
 ```
-let g:DiffFilterExpr = {lnum -> getline(lnum) !~ '^\s*["#]'}
+let g:DiffFilterExpr = {lnum -> line("'<") <= lnum && lnum <= line("'>")}
 ```
-In addition, to check a comment block as well for a filetype like C and C++:
+To compare lines not including a multibyte character:
 ```
+let g:DiffFilterExpr = {lnum -> getline(lnum) !~ '[^\x00-\x7F]'}
+```
+To filter unfolded lines:
+```
+  let g:DiffFilterExpr = {lnum -> foldlevel(lnum) == 0}
+```
+To select indented lines:
+```
+let g:DiffFilterExpr = {lnum -> 0 < indent(lnum)}
+```
+It is possible to specify a function which checks a comment block for a
+filetype like C and C++:
+```
+let g:DiffFilterExpr = function('MyDiffFilterExpr')
 function MyDiffFilterExpr(lnum)
   let [c_line, c_start, c_end] = ['//', '/*', '*/']
   let [c_line, c_start, c_end] = map([c_line, c_start, c_end],
@@ -51,50 +87,20 @@ function MyDiffFilterExpr(lnum)
   call cursor(pos)
   return (0 < sline) ? 1 : 0
 endfunction
-let g:DiffFilterExpr = function('MyDiffFilterExpr')
 ```
-To use the last selected Visual area:
-```
-let g:DiffFilterExpr = {lnum -> line("'<") <= lnum && lnum <= line("'>")}
-```
-To compare lines not including a multibyte character:
-```
-let g:DiffFilterExpr = {lnum -> getline(lnum) !~ '[^\x00-\x7F]'}
-```
-To select indented lines:
-```
-let g:DiffFilterExpr = {lnum -> 0 < indent(lnum)}
-```
-To filter lines based on a text field criteria:
-```
-function MyDiffFilterExpr(lnum)
-  let text = getline(a:lnum)
-  let field = len(split(text, '|'))
-  return text =~ '^|\+|$' && field[0] =~ '^\d\+$' && len(field) == 5
-endfunction
-let g:DiffFilterExpr = function('MyDiffFilterExpr')
-```
-As a default, this plugin sets `hl-Conceal` to visualize which line is not
-diff compared and conceal them. To hide those lines, use `conceallevel` and
-`concealcursor` options. Disable `t:DiffFilterConceal` or
-`g:DiffFilterConceal` variable if not necessary,
-
-Use `:diffupdate` command to reevaluate and redraw diff lines when text or
-option is changed.
 
 ### Options
 
 * `t:DiffFilterExpr`, `g:DiffFilterExpr`
-  * A boolean expression to evaluate if a line should be compared or not
-    (default: `{lnum -> synIDtrans(synID(lnum,
-                    \match(getline(lnum), '\S') + 1, 0)) != hlID('Comment')}`)
+  * A boolean expression to evaluate if a line should be diff compared or not
+    (default: see above)
 
 * `t:DiffFilterConceal`, `g:DiffFilterConceal`
-  * Enable (1) or disable (0) to highlight other than diff compared lines in
-    `hl-Conceal` (default: `1`).
+  * Highlight the diff excluded lines in `hl-Conceal` (1), plus show their
+    filler lines (2), or disable them (0) (default: `1`)
 
-* `g:NoDiffFilter`
-  * Disable (1) this plugin (default: `0`).
+* `g:DiffFilter`
+  * Enable (1) or disable (0) this plugin (default: `1`).
 
 ### Requirements
 
