@@ -46,7 +46,7 @@ lines.
   \synIDtrans(synID(lnum, match(getline(lnum), '\S') + 1, 0)) !=
                                                     \hlID('Comment')}
 ```
-That checks a comment string at the start of each line if the `&commentstring`
+That checks a comment string at the start of each line if the `commentstring`
 option indicates it possible. Otherwise, checks a comment syntax highlighting
 on each line. That is a default expression in this plugin, which can be
 commonly used for a comment line in a lot of filetypes.
@@ -64,7 +64,7 @@ let g:DiffFilterExpr = {lnum -> getline(lnum) !~ '[^\x00-\x7F]'}
 ```
 To filter unfolded lines:
 ```
-  let g:DiffFilterExpr = {lnum -> foldlevel(lnum) == 0}
+let g:DiffFilterExpr = {lnum -> foldlevel(lnum) == 0}
 ```
 To select indented lines:
 ```

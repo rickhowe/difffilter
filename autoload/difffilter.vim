@@ -1,7 +1,7 @@
 " difffilter.vim : Selectively compare lines as you want in diff mode
 "
-" Last Change: 2024/05/25
-" Version:     1.2
+" Last Change: 2024/06/09
+" Version:     1.3
 " Author:      Rick Howe (Takumi Ohtani) <rdcxy754@ybb.ne.jp>
 " Copyright:   (c) 2024 Rick Howe
 " License:     MIT
@@ -56,7 +56,7 @@ function! difffilter#DiffExpr() abort
     call execute('autocmd! ' . s:df . ' FilterWritePost *
                           \ let s:dw += [bufwinid(str2nr(expand("<abuf>")))]')
   else
-    " set zz in excluded lines
+    " check to-be-excluded lines and set zz to them
     let DE = get(t:, 'DiffFilterExpr', get(g:, 'DiffFilterExpr', s:de))
     if empty(DE) || type(DE) != v:t_func | let DE = {-> 1} | endif
     let zz = repeat(nr2char(0x7f), 3)
@@ -70,81 +70,86 @@ function! difffilter#DiffExpr() abort
     endfor
     " do diff() with &diffopt
     let op = #{}
-    for oi in ['icase', 'iblank', 'iwhite', 'iwhiteall', 'iwhiteeol',
+    for do in ['icase', 'iblank', 'iwhite', 'iwhiteall', 'iwhiteeol',
                                             \'indent-heuristic', 'algorithm']
-      if &diffopt =~ '\<' . oi . '\>'
-        let op[oi] = (oi == 'algorithm') ?
-                                  \matchstr(&diffopt, oi . ':\zs\w\+\ze') : 1
+      if &diffopt =~ '\<' . do . '\>'
+        let op[do] = (do == 'algorithm') ?
+                                  \matchstr(&diffopt, do . ':\zs\w\+\ze') : 1
       endif
     endfor
     let dl = split(s:DiffFunc(tx[0], tx[1], op), "\n")
-    " change @@ hunks to exclude zz lines
-    let HK = {l1, l2 -> '@@ -' . l1[0] . ((l1[1] == 1) ? '' : ',' . l1[1]) .
+    if empty(filter(copy(s:dw), '!empty(getwinvar(v:val, s:ln))'))
+      " found no zz lines in all diff wins
+      let hk = dl
+    else
+      " change @@ hunks to exclude zz lines
+      let HK = {l1, l2 -> '@@ -' . l1[0] . ((l1[1] == 1) ? '' : ',' . l1[1]) .
                     \' +' . l2[0] . ((l2[1] == 1) ? '' : ',' . l2[1]) . ' @@'}
-    " vim not always work correctly so disable to split hunks as a default
-    let xt = get(t:, 'DiffFilterExtra', get(g:, 'DiffFilterExtra', 0))
-    let ed = ''
-    let hk = []
-    for ix in range(len(dl) - 1, 0, -1)
-      let dx = dl[ix]
-      if dx[0] != '@'
-        let ed = ((dx == '-' . zz) ? '<' : (dx == '+' . zz) ? '>' : dx[0]) .
+      " vim not always work correctly so disable to split hunks as a default
+      let xt = get(t:, 'DiffFilterExtra', get(g:, 'DiffFilterExtra', 0))
+      let ed = ''
+      let hk = []
+      for ix in range(len(dl) - 1, 0, -1)
+        let dx = dl[ix]
+        if dx[0] != '@'
+          let ed = ((dx == '-' . zz) ? '<' : (dx == '+' . zz) ? '>' : dx[0]) .
                                                                           \ed
-      else
-        if ed !~ '[<>]'
-          let hk = [dx] + hk
         else
-          let [d1, d2] = map(split(dx[3 : -4]), 'v:val[1:]')
-          let [p1, q1] = [map((d1 =~ ',') ? split(d1, ',') : [d1, 1],
+          if ed !~ '[<>]'
+            let hk = [dx] + hk
+          else
+            let [d1, d2] = map(split(dx[3 : -4]), 'v:val[1:]')
+            let [p1, q1] = [map((d1 =~ ',') ? split(d1, ',') : [d1, 1],
                                                         \'str2nr(v:val)'), []]
-          let [p2, q2] = [map((d2 =~ ',') ? split(d2, ',') : [d2, 1],
+            let [p2, q2] = [map((d2 =~ ',') ? split(d2, ',') : [d2, 1],
                                                         \'str2nr(v:val)'), []]
-          let [e1, e2] = split(substitute(ed,
-                                      \'[-<]*\ze\zs[+>]*', ':', ''), ':', 1)
-          for [ee, pp, qq, es, ez] in [[e1, p1, q1, '-', '<'],
+            let [e1, e2] = split(substitute(ed,
+                                        \'[-<]*\ze\zs[+>]*', ':', ''), ':', 1)
+            for [ee, pp, qq, es, ez] in [[e1, p1, q1, '-', '<'],
                                                       \[e2, p2, q2, '+', '>']]
-            if ee =~ ez
-              if ee !~ es . ez . '\+' . es
-                " -</<-/<</<-< or +>/>+/>>/>+> : exclude < or > zz lines
-                let pp[1] = count(ee, es)
-                if 0 < pp[1]
-                  let pp[0] += len(split(ee, es . '\+', 1)[0])
-                endif
-              else
-                " -<- or +>+ : split into 2 or more hunks
-                if xt
-                  let cc = 0
-                  for sz in split(ee, '\%(' . es . '\+\|' . ez . '\+\)\zs')
-                    if sz[0] == es
-                      let qq += [[pp[0] + cc , len(sz)]]
-                    endif
-                    let cc += len(sz)
-                  endfor
+              if ee =~ ez
+                if ee !~ es . ez . '\+' . es
+                  " -</<-/<</<-< or +>/>+/>>/>+> : exclude < or > zz lines
+                  let pp[1] = count(ee, es)
+                  if 0 < pp[1]
+                    let pp[0] += len(split(ee, es . '\+', 1)[0])
+                  endif
+                else
+                  " -<- or +>+ : split into 2 or more hunks
+                  if xt
+                    let cc = 0
+                    for sz in split(ee, '\%(' . es . '\+\|' . ez . '\+\)\zs')
+                      if sz[0] == es
+                        let qq += [[pp[0] + cc , len(sz)]]
+                      endif
+                      let cc += len(sz)
+                    endfor
+                  endif
                 endif
               endif
-            endif
-          endfor
-          if empty(q1) && empty(q2)
-            let hx = [HK(p1, p2)]
-          else
-            let hx = []
-            if !empty(q1) && empty(q2)
-              let hx += [HK(q1[0], p2)]
-              let pp = [(p2[1] == 0) ? p2[0] : p2[0] + p2[1] - 1, 0]
-              for qq in q1[1:] | let hx += [HK(qq, pp)] | endfor
-            elseif empty(q1) && !empty(q2)
-              let hx += [HK(p1, q2[0])]
-              let pp = [(p1[1] == 0) ? p1[0] : p1[0] + p1[1] - 1, 0]
-              for qq in q2[1:] | let hx += [HK(pp, qq)] | endfor
-            else
+            endfor
+            if empty(q1) && empty(q2)
               let hx = [HK(p1, p2)]
+            else
+              let hx = []
+              if !empty(q1) && empty(q2)
+                let hx += [HK(q1[0], p2)]
+                let pp = [(p2[1] == 0) ? p2[0] : p2[0] + p2[1] - 1, 0]
+                for qq in q1[1:] | let hx += [HK(qq, pp)] | endfor
+              elseif empty(q1) && !empty(q2)
+                let hx += [HK(p1, q2[0])]
+                let pp = [(p1[1] == 0) ? p1[0] : p1[0] + p1[1] - 1, 0]
+                for qq in q2[1:] | let hx += [HK(pp, qq)] | endfor
+              else
+                let hx = [HK(p1, p2)]
+              endif
             endif
+            let hk = hx + hk
           endif
-          let hk = hx + hk
+          let ed = ''
         endif
-        let ed = ''
-      endif
-    endfor
+      endfor
+    endif
     " trick: change an empty hunk to [0,0] to always trigger DiffUpdated
     if empty(hk) | let hk = ['@@ -0,0 +0,0 @@'] | endif
     call writefile(hk, v:fname_out)
